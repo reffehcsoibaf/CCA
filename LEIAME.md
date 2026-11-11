@@ -8,7 +8,7 @@ Requer Python 3.10 ou mais novo, com wxPython e claude-agent-sdk:
 
     python -m pip install wxPython claude-agent-sdk
 
-Para abrir: Enter no atalho "Abrir CCA" nesta pasta. Ele chama o pythonw do Python 3.13 direto, sem janela de terminal. O `abrir.cmd` também funciona, mas sempre mostra um terminal antes de abrir o app.
+Para abrir: Enter no atalho "Abrir CCA" nesta pasta. Ele chama o pythonw do Python 3.13 direto, sem janela de terminal. O `abrir.cmd` também funciona, mas sempre mostra um terminal antes de abrir o app. Ele procura o Python 3.13 desta máquina, depois o `py` e o que estiver no PATH (precisa ser 3.10 ou mais novo), e se faltarem o wxPython ou o claude-agent-sdk pergunta se pode instalar. É o caminho para quem baixa o zip da release.
 
 O app inicia o Claude Code com a opção do Windows que não cria janela de console. Sem isso, com o Windows Terminal como terminal padrão, aparecia uma aba "claude" que o NVDA lia. Para conferir: `pythonw tests\console_check.pyw` grava em `tests\console_check.txt` se algum console visível apareceu.
 

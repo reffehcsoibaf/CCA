@@ -19,7 +19,8 @@ import formatting
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "dist")
 EXCLUDE_DIRS = ("tests/",)
-EXCLUDE_FILES = {".gitignore", "publicar.py", "publicar.cmd", "downloads.py", "downloads.cmd"}
+EXCLUDE_FILES = {".gitignore", "publicar.py", "publicar.cmd", "downloads.py", "downloads.cmd",
+                 "instalacao-release.md"}
 
 
 def run(*args):
@@ -31,6 +32,18 @@ def changelog_section(text, version):
     """O texto da seção '## <versão>' do CHANGELOG, ou '' se não existe."""
     match = re.search(r"^## " + re.escape(version) + r"\s*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
     return match.group(1).strip() if match else ""
+
+
+def release_notes(changelog_notes, version):
+    """Notas da release: o texto do CHANGELOG e, depois do marcador, o passo a
+    passo de instalação (instalacao-release.md). O atualizador do app corta as
+    notas no marcador, então o passo a passo não aparece na janela de versão nova."""
+    try:
+        with open(os.path.join(HERE, "instalacao-release.md"), encoding="utf-8") as f:
+            install = f.read().replace("{versao}", version).strip()
+    except OSError:
+        return changelog_notes
+    return changelog_notes + "\n\n" + install
 
 
 def release_files(tracked):
@@ -79,7 +92,7 @@ def main():
         return 0
     notes_path = os.path.join(OUT, f"notas-{version}.md")
     with open(notes_path, "w", encoding="utf-8") as f:
-        f.write(notes + "\n")
+        f.write(release_notes(notes, version) + "\n")
     code, out, err = run("gh", "release", "create", version, manual, auto, "--title", version,
                          "--notes-file", notes_path, "--latest", "--target", "main")
     if code:

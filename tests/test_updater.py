@@ -152,6 +152,15 @@ def test_downloads_summary_separates_manual_and_updates():
     assert "Nenhuma" in downloads.report([])
 
 
+def test_install_steps_added_to_release_notes_but_not_shown_in_update_dialog():
+    notes = publicar.release_notes("Novidade X", "2026.11.11.0")
+    assert notes.startswith("Novidade X") and "CCA-2026.11.11.0.zip" in notes
+    assert "{versao}" not in notes
+    data = [rel("2026.11.11.0", notes)]
+    release = updater.releases_from_json(data, "2026.11.10.0")
+    assert release.notes == "Novidade X" and release.history == [("2026.11.11.0", "Novidade X")]
+
+
 def test_publicar_changelog_section_and_files():
     text = "# R\n\n## 2026.11.11.0\n\nB\n\n## 2026.11.10.0\n\nA\n"
     assert publicar.changelog_section(text, "2026.11.10.0") == "A"
@@ -159,3 +168,4 @@ def test_publicar_changelog_section_and_files():
     assert publicar.changelog_section(text, "2026.11.12.0") == ""
     kept = publicar.release_files(["app.py", "tests/test_x.py", "publicar.py", ".gitignore", "sons/a.wav"])
     assert kept == ["app.py", "sons/a.wav"]
+    assert publicar.release_files(["instalacao-release.md", "app.py"]) == ["app.py"]

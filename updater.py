@@ -26,6 +26,9 @@ REPO = "reffehcsoibaf/CCA"
 API = f"https://api.github.com/repos/{REPO}/releases?per_page=30"
 PAGE = f"https://github.com/{REPO}/releases/latest"
 UPDATE_SUFFIX = "-atualizacao.zip"
+# O publicar.py põe o passo a passo de instalação depois deste marcador; a janela
+# de versão nova não precisa dele.
+NOTES_END = "<!-- instalacao -->"
 CHECK_EVERY_HOURS = 24
 # Nunca sobrescritos nem criados pela atualização.
 KEEP = ("__pycache__", ".git")
@@ -55,6 +58,10 @@ def is_newer(candidate, current):
     return bool(a) and bool(b) and a > b
 
 
+def clean_notes(body):
+    return (body or "").split(NOTES_END)[0].strip()
+
+
 def releases_from_json(data, current):
     """Escolhe a release mais nova (fora rascunhos e pré-lançamentos) e junta as
     notas de tudo que saiu depois da versão em uso. None se não há nada novo."""
@@ -69,7 +76,7 @@ def releases_from_json(data, current):
         return None
     newer.sort(key=lambda i: parse_version(i["tag_name"]), reverse=True)
     top = newer[0]
-    release = Release(version=top["tag_name"].lstrip("v"), notes=(top.get("body") or "").strip(),
+    release = Release(version=top["tag_name"].lstrip("v"), notes=clean_notes(top.get("body")),
                       url=top.get("html_url") or PAGE)
     for asset in top.get("assets") or []:
         if asset.get("name", "").endswith(UPDATE_SUFFIX):
@@ -79,7 +86,7 @@ def releases_from_json(data, current):
             digest = asset.get("digest") or ""
             if digest.startswith("sha256:"):
                 release.sha256 = digest[7:].lower()
-    release.history = [(i["tag_name"].lstrip("v"), (i.get("body") or "").strip()) for i in newer]
+    release.history = [(i["tag_name"].lstrip("v"), clean_notes(i.get("body"))) for i in newer]
     return release
 
 

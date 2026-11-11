@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import uuid
 import webbrowser
@@ -27,6 +28,7 @@ import scheduled
 import sessions
 import subjects
 import transfer
+import updater
 from worker import OTHER, AgentWorker, Answer, fetch_models
 
 NL = chr(10)
@@ -79,6 +81,60 @@ class MessageDialog(wx.Dialog):
         self.SetEscapeId(wx.ID_CANCEL)
         self.text.SetFocus()
         self.text.SetInsertionPoint(0)
+
+
+class UpdateDialog(wx.Dialog):
+    """Versão nova: o foco fica no texto somente leitura com as novidades; o Tab
+    leva aos botões. `choice` fica "install", "page" ou "no"."""
+
+    def __init__(self, parent, release, can_install):
+        super().__init__(parent, title=f"Versão nova do {formatting.APP_NAME}", size=(640, 520),
+                         style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.choice = "no"
+        label = f"Versão {release.version} disponível e novidades"
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(wx.StaticText(self, label=label), 0, wx.ALL, 8)
+        self.text = wx.TextCtrl(self, value=update_text(release, can_install), name=label,
+                                style=wx.TE_MULTILINE | wx.TE_READONLY)
+        sizer.Add(self.text, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        row = wx.BoxSizer(wx.HORIZONTAL)
+        if can_install:
+            yes, no = wx.Button(self, wx.ID_YES, "&Sim"), wx.Button(self, wx.ID_NO, "&Não")
+            yes.Bind(wx.EVT_BUTTON, lambda e: self._end("install"))
+        else:
+            yes, no = wx.Button(self, wx.ID_YES, "Abrir a página de &download"), wx.Button(self, wx.ID_NO, "&Fechar")
+            yes.Bind(wx.EVT_BUTTON, lambda e: self._end("page"))
+        no.Bind(wx.EVT_BUTTON, lambda e: self._end("no"))
+        row.Add(yes, 0, wx.RIGHT, 8)
+        row.Add(no)
+        sizer.Add(row, 0, wx.ALL | wx.ALIGN_RIGHT, 8)
+        self.SetSizer(sizer)
+        self.SetEscapeId(wx.ID_NO)
+        self.text.SetInsertionPoint(0)
+        self.text.SetFocus()
+        self.CentreOnParent()
+
+    def _end(self, choice):
+        self.choice = choice
+        self.EndModal(wx.ID_OK)
+
+
+def update_text(release, can_install):
+    lines = [f"Versão {release.version} do {formatting.APP_NAME} disponível. Você usa a versão {formatting.VERSION}."]
+    if release.size:
+        lines.append(f"Tamanho do download: {release.size / 1048576:.1f} MB.")
+    lines += ["", "Novidades desde a sua versão:"]
+    for version, notes in release.history or [(release.version, release.notes)]:
+        lines += ["", f"Versão {version}", notes or "(sem texto de novidades)"]
+    lines.append("")
+    if can_install:
+        lines.append("Se você instalar, o app baixa o arquivo, confere o SHA-256, troca os arquivos do programa, "
+                     "fecha e abre de novo já atualizado. Suas sessões, preferências e fila não são afetadas.")
+        lines.append("Deseja baixar e instalar agora? Use Tab para chegar aos botões Sim e Não.")
+    else:
+        lines.append("Esta cópia é de desenvolvimento (tem pasta .git) e não se atualiza sozinha. Abra a página de "
+                     "download ou use o git.")
+    return NL.join(lines)
 
 
 class LinksDialog(wx.Dialog):
@@ -442,6 +498,9 @@ class MainFrame(wx.Frame):
         checked = self.config.get("models_checked") or 0
         if datetime.datetime.now().timestamp() - checked > 7 * 86400:
             wx.CallLater(8000, lambda: self and self.refresh_models(False))
+        # Versão nova no GitHub: confere ao abrir, no máximo uma vez por dia.
+        if updater.due(self.config.get("update_checked_at"), datetime.datetime.now().timestamp()):
+            wx.CallLater(5000, lambda: self and self.check_updates(False))
 
     # ---------- montagem ----------
 
@@ -482,7 +541,13 @@ class MainFrame(wx.Frame):
         menubar.Append(arquivo, "&Arquivo")
         menubar.Append(claude, "&Claude")
         menubar.Append(conta, "C&onta")
+        ajuda = wx.Menu()
+        self.id_update = ajuda.Append(wx.ID_ANY, "Verificar &atualizações…").GetId()
+        self.id_about = ajuda.Append(wx.ID_ANY, "&Sobre, versão").GetId()
+        menubar.Append(ajuda, "A&juda")
         self.SetMenuBar(menubar)
+        self.Bind(wx.EVT_MENU, lambda e: self.check_updates(True), id=self.id_update)
+        self.Bind(wx.EVT_MENU, lambda e: self.show_about(), id=self.id_about)
         self.Bind(wx.EVT_MENU, lambda e: self.compact(), id=self.id_compact)
         self.Bind(wx.EVT_MENU, lambda e: self.show_context(), id=self.id_context)
         self.Bind(wx.EVT_MENU, lambda e: self.show_usage(), id=self.id_usage)
@@ -1896,6 +1961,113 @@ class MainFrame(wx.Frame):
                 f.write(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {text}\n")
         except OSError:
             pass
+
+    # ---------- atualização ----------
+
+    def check_updates(self, manual):
+        """Consulta as releases do GitHub em segundo plano. Automática: no
+        máximo uma vez por dia e calada se não há nada novo."""
+        if getattr(self, "_update_busy", False):
+            return
+        self._update_busy = True
+        if manual:
+            self.announce("Procurando versão nova…")
+
+        def work():
+            release, error = updater.check()
+            wx.CallAfter(self._update_checked, release, error, manual)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_checked(self, release, error, manual):
+        self._update_busy = False
+        if error:
+            if manual:
+                self.announce(error)
+            return
+        self.config["update_checked_at"] = datetime.datetime.now().timestamp()
+        self.save_config()
+        if release is None:
+            if manual:
+                self.announce(f"Você já usa a versão mais nova, {formatting.VERSION}.")
+            return
+        if not manual and self.config.get("update_skip") == release.version:
+            return
+        self.offer_update(release, manual)
+
+    def offer_update(self, release, manual):
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        can_install = updater.can_install(app_dir) and bool(release.asset_url)
+        dlg = UpdateDialog(self, release, can_install)
+        try:
+            dlg.ShowModal()
+            choice = dlg.choice
+        finally:
+            dlg.Destroy()
+        if choice == "install":
+            self.download_update(release, app_dir)
+        elif choice == "page":
+            webbrowser.open(release.url)
+        elif not manual:
+            ask = wx.MessageDialog(self, f"Você não instalou a versão {release.version} agora.\n\n"
+                                   "Talvez mais tarde: o app avisa de novo amanhã.\n"
+                                   "Não me avise mais sobre essa versão: só volta a avisar quando sair outra. "
+                                   "Em Ajuda, Verificar atualizações, você ainda pode instalar quando quiser.",
+                                   formatting.APP_NAME, wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION)
+            ask.SetYesNoLabels("&Não me avise mais sobre essa versão", "&Talvez mais tarde")
+            try:
+                if ask.ShowModal() == wx.ID_YES:
+                    self.config["update_skip"] = release.version
+                    self.save_config()
+            finally:
+                ask.Destroy()
+
+    def download_update(self, release, app_dir):
+        if self.state != "Pronto":
+            self.announce("Espere a resposta terminar, ou interrompa, antes de atualizar.")
+            return
+        self.announce(f"Baixando a versão {release.version}…")
+        last = [-1]
+
+        def progress(done, total):
+            percent = done * 100 // total // 25 * 25
+            if percent != last[0]:
+                last[0] = percent
+                wx.CallAfter(self.set_status, f"Baixando a versão {release.version}: {percent}%")
+
+        def work():
+            folder = tempfile.mkdtemp(prefix="cca-baixado-")
+            try:
+                path = updater.download(release, folder, progress)
+                wx.CallAfter(self.set_status, "Instalando…")
+                updater.install(path, app_dir)
+                error = ""
+            except Exception as exc:
+                error = str(exc) or exc.__class__.__name__
+            finally:
+                shutil.rmtree(folder, ignore_errors=True)
+            wx.CallAfter(self._update_installed, release, app_dir, error)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _update_installed(self, release, app_dir, error):
+        if error:
+            self.announce(f"Não consegui atualizar: {error}")
+            if wx.MessageBox(f"Não consegui atualizar: {error}\n\nAbrir a página de download?",
+                             formatting.APP_NAME, wx.YES_NO | wx.ICON_WARNING) == wx.YES:
+                webbrowser.open(release.url)
+            return
+        self.config.pop("update_skip", None)
+        self.save_config()
+        self.announce(f"Versão {release.version} instalada. Abrindo de novo.")
+        flags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            subprocess.Popen(updater.restart_command(app_dir), cwd=app_dir, creationflags=flags, close_fds=True)
+        except OSError as exc:
+            self.announce(f"Versão {release.version} instalada, mas não consegui reabrir: {exc}. Abra o app de novo.")
+            return
+        self.Close()
+
+    def show_about(self):
+        self.announce(f"{formatting.APP_NAME}, Claude Code Acessível, versão {formatting.VERSION}.")
 
     def on_close(self, event):
         self.queue_timer.Stop()

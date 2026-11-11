@@ -67,3 +67,10 @@ O título da janela mostra o andamento: Respondendo, o nome da ação em curso (
 - Erros e a saída de diagnóstico do Claude Code vão para `%APPDATA%\CCA\registro.txt`.
 
 Testes: `python -m pytest` nesta pasta (não usam rede).
+
+## Versões, atualização e downloads
+
+- Versão no formato ano.mês.dia.dígito, igual ao TeleZapp (`VERSION` em `formatting.py`, `CHANGELOG.md`, tag e título da release). Aparece no título da janela e em Ajuda, Sobre, versão.
+- Ajuda, Verificar atualizações: procura versão nova no GitHub e, se houver, mostra as novidades e oferece instalar. O app também confere sozinho ao abrir, no máximo uma vez por dia; "Não me avise mais sobre essa versão" silencia só a checagem automática daquela versão.
+- Para publicar: suba `VERSION`, escreva a seção no `CHANGELOG.md`, faça commit e push, e rode `publicar.cmd` (`publicar.cmd --simular` só monta os zips em `dist`). A release sai sempre como Latest.
+- Para medir o alcance: `downloads.cmd` lista os downloads de cada versão (a saída fica em `C:\logs\downloads.txt`), separando quem baixou pela página de quem atualizou pelo app. São downloads, não pessoas: quem baixa duas vezes conta duas.

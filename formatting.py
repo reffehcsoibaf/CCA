@@ -8,6 +8,7 @@ import os
 import re
 
 APP_NAME = "CCA"  # Claude Code Acessível
+VERSION = "2026.11.10.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
 ITEM_MAX_CHARS = 4000
 
 # (valor para o SDK, rótulo no menu). Valor vazio = padrão do Claude Code.
@@ -193,7 +194,7 @@ _HIDDEN_USER_PREFIXES = (
 
 
 def window_title(state, session_title):
-    title = session_title or APP_NAME
+    title = session_title or f"{APP_NAME} {VERSION}"
     return f"{state} - {title}" if state else title
 
 

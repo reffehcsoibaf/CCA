@@ -4,7 +4,7 @@ from claude_agent_sdk import TextBlock, ToolUseBlock
 
 def test_window_title():
     assert formatting.window_title("Respondendo", "Meu projeto") == "Respondendo - Meu projeto"
-    assert formatting.window_title("Pronto", "") == "Pronto - CCA"
+    assert formatting.window_title("Pronto", "") == f"Pronto - CCA {formatting.VERSION}"
     assert formatting.window_title("", "X") == "X"
 
 

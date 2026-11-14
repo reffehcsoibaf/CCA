@@ -123,7 +123,7 @@ def test_streams_text_and_finishes(setup):
     texts = [d["text"] for n, d in rec.events if n == "assistant_text"]
     assert texts[0] == "Olá"
     assert texts[-1] == "Olá, mundo\n\nLi o arquivo."
-    assert {"state": "Lendo arquivo x.py"} in [d for n, d in rec.events if n == "busy"]
+    assert {"state": "Lendo arquivo x.py", "step": True} in [d for n, d in rec.events if n == "busy"]
     client = FakeClient.instances[0]
     assert client.queries == ["oi"]
     assert client.options.cwd == r"C:\proj" and client.options.resume is None
@@ -296,6 +296,24 @@ def _add_setters():
 
     FakeClient.set_permission_mode = set_permission_mode
     FakeClient.set_model = set_model
+
+
+def test_chrome_flag_goes_to_claude_code_and_restarts():
+    FakeClient.instances = []
+    rec = Recorder()
+    w = AgentWorker(rec, client_factory=FakeClient)
+    try:
+        async def script(client, prompt):
+            client.push(result())
+        FakeClient.script = script
+        w.send("oi").result(5)
+        rec.wait("done")
+        assert not FakeClient.instances[0].options.extra_args
+        w.set_chrome(True).result(5)       # parado: reinicia na hora
+        w.send("abra o google").result(5)
+        assert FakeClient.instances[-1].options.extra_args == {"chrome": None}
+    finally:
+        w.close()
 
 
 def test_options_carry_mode_model_effort():

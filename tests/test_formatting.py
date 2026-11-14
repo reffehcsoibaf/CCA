@@ -53,9 +53,26 @@ def test_group_transcript_merges_assistant_turn():
 
 def test_tool_action():
     assert formatting.tool_action("Read", {"file_path": r"C:\x\app.py"}) == "Lendo arquivo app.py"
-    assert formatting.tool_action("Bash", {"command": "ls"}) == "Executando comando"
+    assert formatting.tool_action("Bash", {"command": "ls"}) == "Executando comando: ls"
+    assert formatting.tool_action("Bash", {"command": "gh pr create", "description": "Abrir a PR"}) == "Abrir a PR"
+    assert formatting.tool_action("WebFetch", {"url": "https://www.example.com/a/b"}) == "Lendo página da web example.com"
+    assert formatting.tool_action("Grep", {"pattern": "def x"}) == "Procurando no código: def x"
+    assert formatting.tool_action("Agent", {"description": "Revisar"}) == "Delegando a um subagente: Revisar"
+    assert formatting.tool_action("Skill", {"skill": "pdf"}) == "Usando habilidade pdf"
     assert formatting.tool_action("mcp__github__create_issue", {}) == "Usando conector create_issue"
     assert formatting.tool_action("Novo", {}) == "Usando Novo"
+
+
+def test_chrome_actions_in_portuguese():
+    p = "mcp__claude-in-chrome__"
+    assert formatting.tool_action(p + "navigate", {"url": "https://google.com"}) == "Abrindo no Chrome https://google.com"
+    assert formatting.tool_action(p + "navigate", {"url": "back"}) == "Voltando no Chrome"
+    assert formatting.tool_action(p + "computer", {"action": "left_click"}) == "Clicando na página"
+    assert formatting.tool_action(p + "get_page_text", {}) == "Lendo o texto da página no Chrome"
+    assert formatting.tool_action(p + "outra", {}) == "Usando o Chrome: outra"
+    text = formatting.permission_text(p + "navigate", {"url": "https://banco.com"})
+    assert text == "Claude quer usar o Chrome: Abrindo no Chrome https://banco.com"
+    assert "Valor: 123" in formatting.permission_text(p + "form_input", {"value": "123"})
 
 
 def test_permission_text():
@@ -81,6 +98,18 @@ Current week (Sonnet only): 40% used · resets 9am (America/Sao_Paulo)
 
 What's contributing to your usage?
 """
+
+
+def test_usage_exhausted():
+    assert formatting.usage_exhausted(USAGE) is False
+    assert formatting.usage_exhausted("Current session: 100% used · resets 5pm") is True
+    assert formatting.usage_exhausted("nada aqui") is None
+
+
+def test_move_text():
+    assert formatting.move_text(2, 1, 3) == "Posição 2 de 3."
+    assert formatting.move_text(0, 0, 3).startswith("Já é a primeira")
+    assert formatting.move_text(2, 2, 3).startswith("Já é a última")
 
 
 def test_usage_summary():

@@ -64,6 +64,12 @@ class LimitTracker:
             return None
         return max((t for t in times if t), default=0) or None
 
+    def clear_rejected(self):
+        """O limite renovou antes do previsto (ou a pessoa liberou o envio):
+        esquece as janelas esgotadas até o Claude Code informar de novo."""
+        self.windows = {k: w for k, w in self.windows.items() if w["status"] != "rejected"}
+        self._announced = None
+
     def is_rejected(self):
         return any(w["status"] == "rejected" for w in self.windows.values())
 

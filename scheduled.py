@@ -71,6 +71,13 @@ class Queue:
         self.save()
         return target
 
+    def swap(self, a, b):
+        """Troca de lugar dois itens da fila (os próprios objetos)."""
+        i = next(n for n, x in enumerate(self.items) if x is a)
+        j = next(n for n, x in enumerate(self.items) if x is b)
+        self.items[i], self.items[j] = self.items[j], self.items[i]
+        self.save()
+
     def edit(self, index, text):
         self.items[index].text = text
         self.save()

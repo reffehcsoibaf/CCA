@@ -97,8 +97,9 @@ _ERROR_TEXT = {
 
 class AgentWorker:
     def __init__(self, emit, client_factory=ClaudeSDKClient, cli_path=None,
-                 permission_mode="default", model="", effort=""):
+                 permission_mode="default", model="", effort="", chrome=False):
         self._emit = emit
+        self._chrome = bool(chrome)
         self._factory = client_factory
         self._cli_path = cli_path
         self._permission_mode = permission_mode or "default"
@@ -153,6 +154,9 @@ class AgentWorker:
     def set_effort(self, effort):
         return self.submit(self._set_effort(effort))
 
+    def set_chrome(self, enabled):
+        return self.submit(self._set_chrome(enabled))
+
     def close(self):
         fut = self.submit(self._disconnect())
         try:
@@ -192,6 +196,10 @@ class AgentWorker:
             permission_mode=self._permission_mode,
             model=self._model or None,
             effort=self._effort or None,
+            # --chrome liga a ponte com a extensão Claude in Chrome (a mesma do
+            # aplicativo Claude): as ferramentas mcp__claude-in-chrome__* passam
+            # a existir na sessão e comandam o Chrome já aberto do usuário.
+            extra_args={"chrome": None} if self._chrome else {},
         )
         client = self._factory(options=options)
         self._emit("status", text="Conectando ao Claude…")
@@ -257,6 +265,19 @@ class AgentWorker:
         else:
             await self._disconnect()
 
+    async def _set_chrome(self, enabled):
+        # Como o esforço, --chrome só é lido quando o Claude Code inicia.
+        enabled = bool(enabled)
+        if enabled == self._chrome:
+            return
+        self._chrome = enabled
+        if self._client is None:
+            return
+        if self._in_flight:
+            self._restart_after_turn = True
+        else:
+            await self._disconnect()
+
     async def _disconnect(self):
         self._cancel_pending()
         client, reader = self._client, self._reader
@@ -291,13 +312,19 @@ class AgentWorker:
             if message.error:
                 self._emit("error", text=_ERROR_TEXT.get(message.error, "Erro: " + str(message.error)))
             if message.parent_tool_use_id:
-                return  # subagente: não entra na conversa
+                # Subagente: o texto não entra na conversa, mas as ações são
+                # faladas, senão o NVDA fica mudo enquanto ele trabalha.
+                for block in message.content:
+                    if isinstance(block, ToolUseBlock):
+                        self._emit("busy", state="Subagente: " + formatting.tool_action(block.name, block.input),
+                                   step=True)
+                return
             texts = []
             for block in message.content:
                 if isinstance(block, TextBlock) and block.text.strip():
                     texts.append(block.text.strip())
                 elif isinstance(block, ToolUseBlock):
-                    self._emit("busy", state=formatting.tool_action(block.name, block.input))
+                    self._emit("busy", state=formatting.tool_action(block.name, block.input), step=True)
                     path = formatting.tool_file(block.name, block.input)
                     if path:
                         self._emit("tool_file", turn=self._turn, path=path)
@@ -364,6 +391,9 @@ class AgentWorker:
         kind = event.get("type")
         if kind == "content_block_start":
             self._partial = ""
+            block = event.get("content_block") or {}
+            if block.get("type") in ("thinking", "redacted_thinking"):
+                self._emit("busy", state="Pensando")
         elif kind == "content_block_delta":
             delta = event.get("delta") or {}
             if delta.get("type") == "text_delta":

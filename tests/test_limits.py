@@ -12,6 +12,15 @@ FIVE = ts(2026, 11, 6, 23, 10)
 WEEK = ts(2026, 11, 12, 23, 0)
 
 
+def test_clear_rejected():
+    t = LimitTracker()
+    t.update("five_hour", "rejected", 1.0, FIVE)
+    t.update("seven_day", "allowed", 0.5, WEEK)
+    assert t.is_rejected()
+    t.clear_rejected()
+    assert not t.is_rejected() and "seven_day" in t.windows
+
+
 def test_silent_below_75_percent():
     t = LimitTracker()
     t.update("seven_day", "allowed_warning", 0.25, WEEK)    # o servidor avisa, mas é só 25%

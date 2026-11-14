@@ -23,7 +23,9 @@ import wx
 import feedback
 import formatting
 import limits
+import list_edge
 import links
+import markup
 import scheduled
 import sessions
 import subjects
@@ -38,8 +40,10 @@ DEFAULTS = {
     "permission_mode": "default",
     "model": "",
     "effort": "",
+    "chrome": False,
     "sound_attention": True,
     "sound_done": True,
+    "sound_list_edge": True,
     "speak_steps": True,
     "speak_answer": False,
     "compact_reminder": 200_000,
@@ -293,21 +297,27 @@ class RequestDialog(wx.Dialog):
 
 class QueueDialog(wx.Dialog):
     """Mensagens que esperam o limite renovar. Enter na lista edita, Delete
-    remove; os botões também mudam a ordem. As mudanças valem na hora."""
+    remove, Alt+Seta para cima e para baixo mudam a ordem (os botões também).
+    As mudanças valem na hora."""
 
-    def __init__(self, parent, queue, when):
+    SEND_NOW = wx.ID_OK  # Fechar devolve wx.ID_CANCEL
+
+    def __init__(self, parent, queue, when, speaker=None):
         super().__init__(parent, title="Fila de mensagens agendadas", size=(700, 450),
                          style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.queue = queue
+        self.speaker = speaker
         sizer = wx.BoxSizer(wx.VERTICAL)
-        sizer.Add(wx.StaticText(self, label="Envio previsto: " + when), 0, wx.ALL, 5)
+        sizer.Add(wx.StaticText(self, label="Envio previsto: " + when
+                                + ". Alt+Seta para cima ou para baixo muda a ordem."), 0, wx.ALL, 5)
         sizer.Add(wx.StaticText(self, label="&Mensagens na fila"), 0, wx.LEFT | wx.TOP, 5)
         self.list = wx.ListBox(self, style=wx.LB_SINGLE)
         sizer.Add(self.list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
         row = wx.BoxSizer(wx.HORIZONTAL)
         for label, handler in (("&Editar", self.on_edit), ("&Remover", self.on_remove),
                                ("&Subir", lambda e: self.on_move(-1)),
-                               ("&Descer", lambda e: self.on_move(1))):
+                               ("&Descer", lambda e: self.on_move(1)),
+                               ("Enviar a&gora", lambda e: self.EndModal(self.SEND_NOW))):
             button = wx.Button(self, label=label)
             button.Bind(wx.EVT_BUTTON, handler)
             row.Add(button, 0, wx.RIGHT, 5)
@@ -332,6 +342,10 @@ class QueueDialog(wx.Dialog):
 
     def _on_key(self, event):
         key = event.GetKeyCode()
+        if (wx.Window.FindFocus() is self.list and event.GetModifiers() == wx.MOD_ALT
+                and key in (wx.WXK_UP, wx.WXK_DOWN)):
+            self.on_move(-1 if key == wx.WXK_UP else 1)
+            return
         if wx.Window.FindFocus() is self.list and not event.HasAnyModifiers():
             if key in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
                 self.on_edit(None)
@@ -365,8 +379,11 @@ class QueueDialog(wx.Dialog):
         index = self._selected()
         if index is None:
             return
-        self._fill(self.queue.move(index, delta))
+        target = self.queue.move(index, delta)
+        self._fill(target)
         self.list.SetFocus()
+        if self.speaker:
+            self.speaker.speak(formatting.move_text(index, target, len(self.queue)), interrupt=True)
 
 
 class SettingsDialog(wx.Dialog):
@@ -392,6 +409,7 @@ class SettingsDialog(wx.Dialog):
 
         self.sound_attention = check("&Som quando o Claude precisar de você", "sound_attention")
         self.sound_done = check("Som quando a resposta &terminar", "sound_done")
+        self.sound_list_edge = check("Som no &início ou fim de uma lista", "sound_list_edge")
         self.speak_steps = check("&Falar as etapas pelo NVDA (ações, perguntas, pronto)", "speak_steps")
         self.speak_answer = check("&Ler a resposta inteira pelo NVDA ao terminar", "speak_answer")
         self.mode = choice("&Modo de permissão", formatting.PERMISSION_MODES, config.get("permission_mode"))
@@ -400,6 +418,7 @@ class SettingsDialog(wx.Dialog):
         self.refresh.Bind(wx.EVT_BUTTON, lambda e: parent.refresh_models(True, done=self.set_models))
         sizer.Add(self.refresh, 0, wx.ALL, 5)
         self.effort = choice("&Esforço", formatting.EFFORTS, config.get("effort"))
+        self.chrome = check("Na&vegar pelo Chrome (extensão Claude in Chrome)", "chrome")
         self.reminder = choice("Lembrar de &compactar quando a conversa passar de",
                                formatting.COMPACT_REMINDERS, config.get("compact_reminder"))
         self.folder = wx.Button(self, label="")
@@ -436,11 +455,13 @@ class SettingsDialog(wx.Dialog):
         return {
             "sound_attention": self.sound_attention.GetValue(),
             "sound_done": self.sound_done.GetValue(),
+            "sound_list_edge": self.sound_list_edge.GetValue(),
             "speak_steps": self.speak_steps.GetValue(),
             "speak_answer": self.speak_answer.GetValue(),
             "permission_mode": formatting.PERMISSION_MODES[self.mode.GetSelection()][0],
             "model": self.models[self.model.GetSelection()][0],
             "effort": formatting.EFFORTS[self.effort.GetSelection()][0],
+            "chrome": self.chrome.GetValue(),
             "compact_reminder": formatting.COMPACT_REMINDERS[self.reminder.GetSelection()][0],
         }
 
@@ -457,7 +478,8 @@ class MainFrame(wx.Frame):
         self.last_spoken_state = None
         self.worker = AgentWorker(self._post, cli_path=self.cli,
                                   permission_mode=self.config["permission_mode"],
-                                  model=self.config["model"], effort=self.config["effort"])
+                                  model=self.config["model"], effort=self.config["effort"],
+                                  chrome=bool(self.config.get("chrome")))
         self.session_title = NEW_SESSION_TITLE
         self.state = "Pronto"
         self.items = []          # [papel, texto]
@@ -489,7 +511,8 @@ class MainFrame(wx.Frame):
         self.check_login()
         self.Bind(wx.EVT_CLOSE, self.on_close)
         self.queue_timer = wx.Timer(self)
-        self.Bind(wx.EVT_TIMER, lambda e: self.check_queue(), self.queue_timer)
+        self.Bind(wx.EVT_TIMER, lambda e: self.on_queue_timer(), self.queue_timer)
+        self.limit_probed = 0                # quando o /usage foi consultado por último, no limite
         self.queue_timer.Start(20000)
         self.update_awake()
         if self.queue.items:
@@ -531,10 +554,15 @@ class MainFrame(wx.Frame):
         claude.AppendSeparator()
         self.speech_item = claude.AppendCheckItem(wx.ID_ANY, "&Fala automática\tAlt+S")
         self.speech_item.Check(bool(self.config.get("speak_steps")))
+        self.chrome_item = claude.AppendCheckItem(wx.ID_ANY, "Na&vegar pelo Chrome (extensão Claude in Chrome)")
+        self.chrome_item.Check(bool(self.config.get("chrome")))
         self.id_compact = claude.Append(wx.ID_ANY, "Com&pactar a conversa…\tCtrl+K").GetId()
         self.id_context = claude.Append(wx.ID_ANY, "&Tamanho da conversa").GetId()
         self.id_usage = claude.Append(wx.ID_ANY, "Consultar &limite de uso\tAlt+L").GetId()
         self.id_queue = claude.Append(wx.ID_ANY, "Fila de mensagens a&gendadas…\tAlt+F").GetId()
+        self.id_send_queue = claude.Append(
+            wx.ID_ANY, "E&nviar a fila agora (o limite já voltou)\tCtrl+Shift+F").GetId()
+        self.Bind(wx.EVT_MENU, lambda e: self.send_queue_now(), id=self.id_send_queue)
         self.id_enqueue = claude.Append(
             wx.ID_ANY, "&Agendar a mensagem escrita para quando o limite renovar (Ctrl+Shift+Enter)").GetId()
         self.id_settings = claude.Append(wx.ID_ANY, "&Configurações…\tCtrl+,").GetId()
@@ -555,6 +583,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, lambda e: self.enqueue(), id=self.id_enqueue)
         self.Bind(wx.EVT_MENU, lambda e: self.open_settings(), id=self.id_settings)
         self.Bind(wx.EVT_MENU, lambda e: self.toggle_speech(), id=self.speech_item.GetId())
+        self.Bind(wx.EVT_MENU, lambda e: self.toggle_chrome(), id=self.chrome_item.GetId())
 
         panel = wx.Panel(self)
         self.panel = panel
@@ -567,14 +596,15 @@ class MainFrame(wx.Frame):
             sizer.Add(label, 0, wx.LEFT | wx.TOP, 5)
             sizer.Add(ctrl, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
 
-        # A ordem de criação define a ordem do Tab.
-        self.msg = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 70))
-        labeled("Mensagem", self.msg)
-        self.conv = wx.ListBox(panel, style=wx.LB_SINGLE)
-        labeled("Conversa", self.conv, 3)
+        # De cima para baixo: pastas, conversa, mensagem. A ordem de criação
+        # define a ordem do Tab, que acompanha a ordem na tela (e Alt+1/2/3).
         self.sess = wx.TreeCtrl(panel, style=wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS
                                 | wx.TR_LINES_AT_ROOT | wx.TR_SINGLE)
         labeled("Sessões por pasta", self.sess, 2)
+        self.conv = wx.ListBox(panel, style=wx.LB_SINGLE)
+        labeled("Conversa", self.conv, 3)
+        self.msg = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 70))
+        labeled("Mensagem", self.msg)
         panel.SetSizer(sizer)
         # Fora da ordem do Tab; o NVDA lê com NVDA+End.
         self.CreateStatusBar()
@@ -741,6 +771,21 @@ class MainFrame(wx.Frame):
             self.announce("Esforço: " + formatting.choice_label(formatting.EFFORTS, effort)
                           + ". Vale a partir da próxima mensagem.")
 
+    def toggle_chrome(self):
+        self.set_chrome(not self.config.get("chrome"))
+
+    def set_chrome(self, on, announce=True):
+        self.config["chrome"] = bool(on)
+        self.chrome_item.Check(bool(on))
+        self.save_config()
+        self.worker.set_chrome(on)
+        if announce:
+            self.announce(
+                "Navegação pelo Chrome ligada. Deixe o Chrome aberto, com a extensão Claude in Chrome"
+                " entrada na sua conta. Vale a partir da próxima mensagem; cada ação no Chrome pede"
+                " a sua confirmação." if on else
+                "Navegação pelo Chrome desligada. Vale a partir da próxima mensagem.")
+
     def toggle_speech(self):
         on = not self.config.get("speak_steps")
         self.config["speak_steps"] = on
@@ -768,6 +813,8 @@ class MainFrame(wx.Frame):
             self.change_model(values["model"], announce=False)
         if values["effort"] != old.get("effort"):
             self.change_effort(values["effort"], announce=False)
+        if values["chrome"] != bool(old.get("chrome")):
+            self.set_chrome(values["chrome"], announce=False)
         self.announce("Configurações salvas.")
 
     def show_usage(self):
@@ -775,7 +822,11 @@ class MainFrame(wx.Frame):
             self.set_status("Não encontrei o Claude Code.")
             return
         self.announce("Consultando limite de uso…")
+        self._run_usage(self._usage_ready)
 
+    def _run_usage(self, then):
+        """Roda o /usage do Claude Code numa thread (não cria sessão nem gasta
+        uso) e entrega o texto a `then` na thread da janela."""
         def work():
             try:
                 result = subprocess.run(
@@ -786,13 +837,15 @@ class MainFrame(wx.Frame):
                 text = result.stdout.strip() or result.stderr.strip()
             except Exception as exc:
                 text = f"Não consegui consultar o limite: {exc}"
-            wx.CallAfter(self._usage_ready, text)
+            wx.CallAfter(lambda: self and then(text))
 
         threading.Thread(target=work, daemon=True).start()
 
     def _usage_ready(self, text):
         if not self:
             return
+        if self.limited() and formatting.usage_exhausted(text) is False:
+            self.release_limit("O limite já renovou.")
         summary = formatting.usage_summary(text)
         if summary:
             self.set_status(" ".join(summary))  # a janela abaixo já é lida pelo NVDA
@@ -831,12 +884,13 @@ class MainFrame(wx.Frame):
     def ev_status(self, text):
         self.set_status(text)
 
-    def ev_busy(self, state):
+    def ev_busy(self, state, step=False):
         if self.compacting and state == "Respondendo":
             state = "Compactando a conversa"
         self.set_state(state)
-        # A pergunta tem fala própria; as outras etapas são faladas quando mudam.
-        if (self.config.get("speak_steps") and state != self.last_spoken_state
+        # A pergunta tem fala própria. Cada ação de ferramenta (step) é falada,
+        # mesmo repetida; os outros estados só quando mudam.
+        if (self.config.get("speak_steps") and (step or state != self.last_spoken_state)
                 and state != "Aguardando sua resposta"):
             self.last_spoken_state = state
             self.speaker.speak(state)
@@ -961,7 +1015,7 @@ class MainFrame(wx.Frame):
             self.set_state(state)
             spoken = state
             if self.config.get("speak_answer") and self.items and self.items[-1][0] == "assistant":
-                spoken += ". " + self.items[-1][1]
+                spoken += ". " + markup.announce(self.items[-1][1])
             sound = "pronto"
         if self.config.get("sound_done"):
             feedback.play(sound)
@@ -1166,6 +1220,9 @@ class MainFrame(wx.Frame):
             if key == ord("L") and event.GetModifiers() == wx.MOD_CONTROL:
                 self.show_links()
                 return
+            if key in (wx.WXK_UP, wx.WXK_DOWN) and event.GetModifiers() == wx.MOD_ALT:
+                self.move_queued(-1 if key == wx.WXK_UP else 1)
+                return
         event.Skip()
 
     def _row_links(self, row):
@@ -1215,7 +1272,7 @@ class MainFrame(wx.Frame):
             title = "Você, mensagem agendada"
         else:
             title = ("Você" if self.items[value][0] == "user" else "Claude") + f", mensagem {value + 1}"
-        with MessageDialog(self, title, self._row_text(row), self._row_links(row)) as dialog:
+        with MessageDialog(self, title, markup.announce(self._row_text(row)), self._row_links(row)) as dialog:
             dialog.ShowModal()
 
     def load_items(self, items, files=None):
@@ -1257,6 +1314,8 @@ class MainFrame(wx.Frame):
             actions.append((f"Lin&ks e arquivos: {links.summary(found)}…\tCtrl+L", self.show_links))
         if kind == "queued":
             actions += [("&Editar mensagem agendada…", self.edit_message),
+                        ("&Subir na fila (Alt+Seta para cima)", lambda: self.move_queued(-1)),
+                        ("&Descer na fila (Alt+Seta para baixo)", lambda: self.move_queued(1)),
                         ("&Remover da fila\tDelete", self.remove_message)]
         elif self.items[value][0] == "user":
             actions += [("&Editar e reenviar", self.edit_message),
@@ -1287,6 +1346,26 @@ class MainFrame(wx.Frame):
             self.announce("Mensagem agendada editada.")
             return
         self.rewind(value, "edit")
+
+    def move_queued(self, delta):
+        """Alt+Seta na conversa: troca a mensagem agendada de lugar com a
+        vizinha desta sessão, mantendo as das outras sessões onde estão."""
+        row = self._selected_row()
+        if not row or row[0] != "queued":
+            self.set_status("Alt+Seta para cima e para baixo mudam a ordem só das mensagens agendadas.")
+            return
+        rows = self.queued_rows
+        pos = next(n for n, q in enumerate(rows) if q is row[1])
+        target = pos + delta
+        if 0 <= target < len(rows):
+            self.queue.swap(rows[pos], rows[target])
+        else:
+            target = pos
+        self.refresh_queued_rows()
+        self.conv.SetSelection(len(self.items) + target)
+        text = formatting.move_text(pos, target, len(rows))
+        self.set_status(text)
+        self.speaker.speak(text, interrupt=True)
 
     def postpone_message(self):
         row = self._selected_row()
@@ -1841,6 +1920,53 @@ class MainFrame(wx.Frame):
     def update_awake(self):
         scheduled.keep_awake(bool(self.queue.items))
 
+    # O limite pode voltar antes do horário previsto (um reset da Anthropic,
+    # uso extra liberado...). Como no limite tudo vai para a fila, nada é
+    # enviado e o Claude Code nunca diria que liberou: a fila ficava presa
+    # até o horário antigo. Por isso, no limite, o app consulta o /usage
+    # (não gasta uso) de tempos em tempos.
+    PROBE_SECONDS = 600
+
+    def on_queue_timer(self):
+        self.check_queue()
+        now = datetime.datetime.now().timestamp()
+        if self.cli and self.limited() and now - self.limit_probed >= self.PROBE_SECONDS:
+            self.limit_probed = now
+            self._run_usage(self._probe_ready)
+
+    def _probe_ready(self, text):
+        exhausted = formatting.usage_exhausted(text)
+        self.write_log(f"Consulta do limite enquanto na fila: {'esgotado' if exhausted else exhausted}")
+        if self.limited() and exhausted is False:
+            self.release_limit("O limite renovou antes do previsto.")
+
+    def release_limit(self, reason=None):
+        """Deixa de considerar o limite esgotado: o Enter volta a enviar e a
+        fila sai. Se o limite ainda valer, o Claude Code avisa na primeira
+        mensagem e ela volta para a fila."""
+        self.set_limit(None)
+        self.limit_tracker.clear_rejected()
+        self.limit_probed = 0
+        if self.queue.items:
+            text = f"Enviando a fila, {len(self.queue)} mensagens."
+        else:
+            text = "O Enter volta a enviar."
+        self.announce(" ".join(t for t in (reason, text) if t))
+        self.refresh_queued_rows()
+        wx.CallAfter(self.check_queue)
+
+    def send_queue_now(self):
+        """Claude, Enviar a fila agora (Ctrl+Shift+F): para quando você sabe
+        que o limite já voltou."""
+        if not self.limited() and not self.queue.items:
+            self.announce("Não há limite em vigor nem mensagens na fila.")
+            return
+        if not self.limited():
+            self.announce(f"A fila sai assim que o Claude ficar livre. {len(self.queue)} na fila.")
+            self.check_queue()
+            return
+        self.release_limit("Limite liberado.")
+
     def _queue_when(self):
         return scheduled.when_text(self.limited_until if self.limited() else None)
 
@@ -1868,11 +1994,14 @@ class MainFrame(wx.Frame):
             self.save_config()
 
     def open_queue(self):
-        with QueueDialog(self, self.queue, self._queue_when()) as dialog:
-            dialog.ShowModal()
+        with QueueDialog(self, self.queue, self._queue_when(), self.speaker) as dialog:
+            send_now = dialog.ShowModal() == QueueDialog.SEND_NOW
         self.update_awake()
         self.refresh_queued_rows()
-        self.set_status(f"Mensagens na fila: {len(self.queue)}.")
+        if send_now:
+            self.send_queue_now()
+        else:
+            self.set_status(f"Mensagens na fila: {len(self.queue)}.")
 
     def _announce_queue_at_start(self):
         if self and self.queue.items:
@@ -1905,9 +2034,16 @@ class MainFrame(wx.Frame):
         item, self.running_item = self.running_item, None
         if item is None:
             return
-        if error and self.limited():
+        if error and (self.limited() or "limit" in error.lower()):
+            if not self.limited():
+                # Erro de limite sem horário: tenta de novo em alguns minutos
+                # (e a consulta do /usage pode liberar antes).
+                now = datetime.datetime.now().timestamp()
+                self.set_limit(now + self.PROBE_SECONDS - scheduled.MARGIN_SECONDS)
+                self.limit_probed = now
             self.announce("Ainda no limite. A mensagem continua na fila e sai "
-                          + self._queue_when() + ".")
+                          + self._queue_when() + ". Ctrl+Shift+F tenta de novo antes disso.")
+            self.refresh_queued_rows()
             return
         for index, queued in enumerate(self.queue.items):
             if queued is item:
@@ -2079,6 +2215,7 @@ class MainFrame(wx.Frame):
 def main():
     app = wx.App()
     frame = MainFrame()
+    list_edge.install(lambda: frame.config.get("sound_list_edge"))
     frame.Show()
     app.MainLoop()
 

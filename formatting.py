@@ -7,8 +7,10 @@ import json
 import os
 import re
 
+import markup
+
 APP_NAME = "CCA"  # Claude Code Acessível
-VERSION = "2026.11.10.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
+VERSION = "2026.11.14.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
 ITEM_MAX_CHARS = 4000
 
 # (valor para o SDK, rótulo no menu). Valor vazio = padrão do Claude Code.
@@ -177,6 +179,22 @@ def usage_summary(text):
             lines.append(sentence + ".")
     return lines
 
+def move_text(old, new, total):
+    """Fala depois de mudar a ordem da fila (posições a partir de 0)."""
+    if old == new:
+        return f"Já é a {'primeira' if new == 0 else 'última'}, posição {new + 1} de {total}."
+    return f"Posição {new + 1} de {total}."
+
+
+def usage_exhausted(text):
+    """Pela saída do /usage: True se algum limite está em 100%, False se
+    todos estão abaixo, None se a saída não foi reconhecida."""
+    found = [int(m.group(1)) for m in re.finditer(r"Current [^:\n]+:\s*(\d+)% used", text or "")]
+    if not found:
+        return None
+    return max(found) >= 100
+
+
 # Prefixos de texto que o Claude Code grava como mensagem de usuário mas que
 # não foram digitados pela pessoa.
 _HIDDEN_USER_PREFIXES = (
@@ -207,7 +225,7 @@ def item_label(role, number, text, note=""):
     NVDA falar logo, sem ler a mensagem inteira."""
     who = "Você" if role == "user" else "Claude"
     # [app.py](src/app.py:3) vira só app.py: o endereço fica na janela de links.
-    body = one_line(re.sub(r"\[([^\]\n]+)\]\([^)\s]+\)", r"\1", text))
+    body = one_line(markup.announce(re.sub(r"\[([^\]\n]+)\]\([^)\s]+\)", r"\1", text)))
     if len(body) > ITEM_MAX_CHARS:
         body = body[:ITEM_MAX_CHARS] + "…"
     note = f", {note}" if note else ""
@@ -350,14 +368,86 @@ def tool_action(name, tool_input):
     }
     label = actions.get(name)
     if label is None:
+        if name.startswith(CHROME_PREFIX):
+            return chrome_action(name[len(CHROME_PREFIX):], tool_input)
         if name.startswith("mcp__"):
             return "Usando conector " + name.split("__")[-1]
         return "Usando " + name
     if name in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit") and path:
         return f"{label} {path}"
-    if name == "Skill" and tool_input.get("skill"):
-        return f"{label} {tool_input['skill']}"
+    # O Claude Code descreve cada comando ("Abrir a PR", "Mesclar no main"):
+    # sem isto todo comando seria só "Executando comando", e comandos
+    # seguidos não eram falados por repetirem a mesma frase.
+    detail = {
+        "Bash": "description", "PowerShell": "description", "Skill": "skill",
+        "Task": "description", "Agent": "description", "WebSearch": "query",
+        "Grep": "pattern", "Glob": "pattern",
+    }.get(name)
+    value = _clip(tool_input.get(detail)) if detail else ""
+    if name in ("Bash", "PowerShell"):
+        return value or f"{label}: {_clip(tool_input.get('command'), 80)}"
+    if name == "WebFetch":
+        host = re.sub(r"^\w+://(www\.)?", "", str(tool_input.get("url") or "")).split("/")[0]
+        return f"{label} {host}" if host else label
+    if value:
+        sep = ": " if name in ("Task", "Agent", "WebSearch", "Grep", "Glob") else " "
+        return f"{label}{sep}{value}"
     return label
+
+
+CHROME_PREFIX = "mcp__claude-in-chrome__"
+
+_CHROME_COMPUTER = {
+    "screenshot": "Tirando uma imagem da tela do Chrome",
+    "left_click": "Clicando na página",
+    "right_click": "Clicando com o botão direito na página",
+    "double_click": "Clicando duas vezes na página",
+    "triple_click": "Clicando três vezes na página",
+    "type": "Digitando na página",
+    "key": "Apertando tecla na página",
+    "scroll": "Rolando a página",
+    "scroll_to": "Rolando até o elemento",
+    "wait": "Esperando a página",
+    "hover": "Passando o mouse na página",
+    "left_click_drag": "Arrastando na página",
+    "zoom": "Ampliando a tela do Chrome",
+}
+
+_CHROME_ACTIONS = {
+    "tabs_context_mcp": "Vendo as abas do Chrome",
+    "tabs_create_mcp": "Abrindo uma aba no Chrome",
+    "read_page": "Lendo a estrutura da página no Chrome",
+    "get_page_text": "Lendo o texto da página no Chrome",
+    "find": "Procurando na página do Chrome",
+    "form_input": "Preenchendo campo no Chrome",
+    "javascript_tool": "Executando script na página do Chrome",
+    "read_console_messages": "Lendo o console do Chrome",
+    "read_network_requests": "Lendo as requisições de rede do Chrome",
+    "resize_window": "Redimensionando a janela do Chrome",
+    "upload_image": "Enviando imagem pelo Chrome",
+    "gif_creator": "Gravando a navegação do Chrome",
+    "update_plan": "Apresentando o plano de navegação",
+}
+
+
+def chrome_action(tool, tool_input):
+    """Frase em português para as ferramentas da extensão Claude in Chrome."""
+    tool_input = tool_input or {}
+    if tool == "navigate":
+        url = str(tool_input.get("url") or "")
+        if url in ("back", "forward"):
+            return "Voltando no Chrome" if url == "back" else "Avançando no Chrome"
+        return f"Abrindo no Chrome {_clip(url, 100)}" if url else "Navegando no Chrome"
+    if tool == "computer":
+        return _CHROME_COMPUTER.get(tool_input.get("action"), "Usando o Chrome")
+    if tool == "find" and tool_input.get("query"):
+        return "Procurando na página do Chrome: " + _clip(tool_input["query"], 80)
+    return _CHROME_ACTIONS.get(tool, "Usando o Chrome: " + tool)
+
+
+def _clip(value, limit=120):
+    text = one_line(str(value or ""))
+    return text[:limit] + "…" if len(text) > limit else text
 
 
 def permission_text(name, tool_input):
@@ -384,6 +474,16 @@ def permission_text(name, tool_input):
         return "Claude quer pesquisar na web: " + str(tool_input.get("query", ""))
     if name == "ExitPlanMode":
         return "Claude terminou o plano e quer começar a executar.\n" + str(tool_input.get("plan", ""))
+    if name.startswith(CHROME_PREFIX):
+        tool = name[len(CHROME_PREFIX):]
+        text = "Claude quer usar o Chrome: " + chrome_action(tool, tool_input)
+        if tool == "javascript_tool" and tool_input.get("text"):
+            text += "\nScript: " + str(tool_input["text"])
+        elif tool == "form_input" and tool_input.get("value") is not None:
+            text += "\nValor: " + str(tool_input["value"])
+        elif tool == "computer" and tool_input.get("text"):
+            text += "\nTexto: " + str(tool_input["text"])
+        return text
     detail = json.dumps(tool_input, ensure_ascii=False)
     if len(detail) > 1500:
         detail = detail[:1500] + "…"

@@ -28,6 +28,15 @@ def test_queue_persists_and_reorders(tmp_path):
     assert again.first().text == "um editado"
 
 
+def test_swap_keeps_other_items(tmp_path):
+    q = Queue(str(tmp_path / "fila.json"))
+    a, b, c = item("a", sid="s1"), item("b", sid="s2"), item("c", sid="s1")
+    for i in (a, b, c):
+        q.add(i)
+    q.swap(a, c)
+    assert [i.text for i in Queue(q.path).items] == ["c", "b", "a"]
+
+
 def test_queue_ignores_broken_file(tmp_path):
     path = tmp_path / "fila.json"
     path.write_text("não é json", encoding="utf-8")

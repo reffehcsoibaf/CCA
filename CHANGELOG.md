@@ -4,6 +4,10 @@ Versões no formato `ano.mês.dia.dígito` (o dígito começa em 0 e sobe se hou
 
 Cada versão é publicada como release no GitHub, sempre marcada como Latest. A tag e o título da release são o próprio número. O número também fica em `VERSION` no `formatting.py` e aparece no título da janela.
 
+## 2026.11.14.1
+
+Correção dos rótulos da tela principal para o NVDA: "Sessões por pasta", "Conversa" e "Mensagem" não eram anunciados direito ao chegar em cada campo. O rótulo agora é criado logo antes do campo, na ordem real das janelas do Windows, e cada campo também recebe o seu nome.
+
 ## 2026.11.14.0
 
 Nova ordem da tela principal: de cima para baixo, Sessões por pasta, Conversa (a lista de mensagens) e Mensagem (a caixa para escrever). O Tab acompanha essa ordem, e Alt+1, Alt+2 e Alt+3 continuam levando a cada uma. O foco inicial continua na caixa de mensagem.

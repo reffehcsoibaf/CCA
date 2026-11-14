@@ -589,22 +589,23 @@ class MainFrame(wx.Frame):
         self.panel = panel
         sizer = wx.BoxSizer(wx.VERTICAL)
 
-        def labeled(text, ctrl, proportion=0):
-            # O NVDA dá ao controle o nome do texto que vem logo antes dele.
-            label = wx.StaticText(panel, label=text)
-            label.MoveBeforeInTabOrder(ctrl)
-            sizer.Add(label, 0, wx.LEFT | wx.TOP, 5)
+        def labeled(text, make, proportion=0):
+            # O NVDA dá ao controle o nome do texto que vem logo antes dele na
+            # ordem real das janelas do Windows, que é a ordem de criação
+            # (MoveBeforeInTabOrder do wx não muda isso). Por isso o rótulo é
+            # criado primeiro e o campo depois; o SetName reforça o nome.
+            sizer.Add(wx.StaticText(panel, label=text), 0, wx.LEFT | wx.TOP, 5)
+            ctrl = make()
+            ctrl.SetName(text)
             sizer.Add(ctrl, proportion, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
+            return ctrl
 
         # De cima para baixo: pastas, conversa, mensagem. A ordem de criação
-        # define a ordem do Tab, que acompanha a ordem na tela (e Alt+1/2/3).
-        self.sess = wx.TreeCtrl(panel, style=wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS
-                                | wx.TR_LINES_AT_ROOT | wx.TR_SINGLE)
-        labeled("Sessões por pasta", self.sess, 2)
-        self.conv = wx.ListBox(panel, style=wx.LB_SINGLE)
-        labeled("Conversa", self.conv, 3)
-        self.msg = wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 70))
-        labeled("Mensagem", self.msg)
+        # também é a do Tab e acompanha a ordem na tela (e Alt+1/2/3).
+        self.sess = labeled("Sessões por pasta", lambda: wx.TreeCtrl(
+            panel, style=wx.TR_HIDE_ROOT | wx.TR_HAS_BUTTONS | wx.TR_LINES_AT_ROOT | wx.TR_SINGLE), 2)
+        self.conv = labeled("Conversa", lambda: wx.ListBox(panel, style=wx.LB_SINGLE), 3)
+        self.msg = labeled("Mensagem", lambda: wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 70)))
         panel.SetSizer(sizer)
         # Fora da ordem do Tab; o NVDA lê com NVDA+End.
         self.CreateStatusBar()

@@ -410,8 +410,8 @@ class SettingsDialog(wx.Dialog):
         self.sound_attention = check("&Som quando o Claude precisar de você", "sound_attention")
         self.sound_done = check("Som quando a resposta &terminar", "sound_done")
         self.sound_list_edge = check("Som no &início ou fim de uma lista", "sound_list_edge")
-        self.speak_steps = check("&Falar as etapas pelo NVDA (ações, perguntas, pronto)", "speak_steps")
-        self.speak_answer = check("&Ler a resposta inteira pelo NVDA ao terminar", "speak_answer")
+        self.speak_steps = check("&Falar as etapas pelo leitor de telas (ações, perguntas, pronto)", "speak_steps")
+        self.speak_answer = check("&Ler a resposta inteira pelo leitor de telas ao terminar", "speak_answer")
         self.mode = choice("&Modo de permissão", formatting.PERMISSION_MODES, config.get("permission_mode"))
         self.model = choice("M&odelo", self.models, config.get("model"))
         self.refresh = wx.Button(self, label="Atualizar lista de mo&delos")
@@ -607,7 +607,7 @@ class MainFrame(wx.Frame):
         self.conv = labeled("Conversa", lambda: wx.ListBox(panel, style=wx.LB_SINGLE), 3)
         self.msg = labeled("Mensagem", lambda: wx.TextCtrl(panel, style=wx.TE_MULTILINE, size=(-1, 70)))
         panel.SetSizer(sizer)
-        # Fora da ordem do Tab; o NVDA lê com NVDA+End.
+        # Fora da ordem do Tab; o NVDA lê com NVDA+End e o JAWS com Insert+Page Down.
         self.CreateStatusBar()
 
         self.msg.Bind(wx.EVT_KEY_DOWN, self.on_msg_key)

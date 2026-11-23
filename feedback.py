@@ -1,5 +1,5 @@
-"""Fala pelo NVDA e sons de aviso. Tudo é opcional: se o NVDA não estiver
-rodando ou a biblioteca faltar, as funções simplesmente não fazem nada."""
+"""Fala pelo NVDA ou pelo JAWS e sons de aviso. Tudo é opcional: se nenhum
+leitor de telas estiver rodando ou a biblioteca faltar, as funções simplesmente não fazem nada."""
 
 import math
 import os
@@ -19,25 +19,55 @@ _TONES = {
 
 
 class Speaker:
+    """Fala pelo leitor de telas que estiver ativo: NVDA ou JAWS. A escolha é
+    refeita a cada fala, porque ele pode trocar de leitor com o app aberto, e o
+    JAWS só aceita a conexão depois de estar rodando."""
+
+    _READERS = (("nvda", "NVDA"), ("jaws", "Jaws"))
+
     def __init__(self):
-        self._nvda = None
+        self._nvda = None  # mantido por compatibilidade com os testes
+        self._outputs = {}
+
+    def _output(self, module, cls):
+        if module in self._outputs:
+            return self._outputs[module]
+        out = None
         try:
-            from accessible_output2.outputs.nvda import NVDA
-            self._nvda = NVDA()
+            mod = __import__("accessible_output2.outputs." + module, fromlist=["output_class"])
+            out = mod.output_class()
         except Exception:
-            self._nvda = None
+            out = None  # leitor não instalado ou ainda fechado: tenta de novo depois
+        if out is not None or module == "nvda":
+            self._outputs[module] = out
+        return out
+
+    def _active(self):
+        if self._nvda is not None:  # injetado por teste
+            try:
+                return self._nvda if self._nvda.is_active() else None
+            except Exception:
+                return None
+        for module, cls in self._READERS:
+            out = self._output(module, cls)
+            try:
+                if out is not None and out.is_active():
+                    return out
+            except Exception:
+                self._outputs.pop(module, None)
+        return None
 
     def available(self):
-        try:
-            return bool(self._nvda and self._nvda.is_active())
-        except Exception:
-            return False
+        return self._active() is not None
 
     def speak(self, text, interrupt=False):
-        if not text or not self.available():
+        if not text:
+            return
+        out = self._active()
+        if out is None:
             return
         try:
-            self._nvda.speak(text, interrupt=interrupt)
+            out.speak(text, interrupt=interrupt)
         except Exception:
             pass
 

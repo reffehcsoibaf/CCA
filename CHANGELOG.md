@@ -4,6 +4,10 @@ Versões no formato `ano.mês.dia.dígito` (o dígito começa em 0 e sobe se hou
 
 Cada versão é publicada como release no GitHub, sempre marcada como Latest. A tag e o título da release são o próprio número. O número também fica em `VERSION` no `formatting.py` e aparece no título da janela.
 
+## 2026.11.23.0
+
+Fala automática também pelo JAWS. Antes o app só falava pelo NVDA: com o JAWS ele ficava mudo (etapas, "Pronto", perguntas, avisos de limite e de compactar). Agora o leitor ativo é escolhido a cada fala, NVDA ou JAWS. Os textos das Configurações dizem "leitor de telas" em vez de "NVDA". Com o Narrador a fala automática continua muda.
+
 ## 2026.11.14.1
 
 Correção dos rótulos da tela principal para o NVDA: "Sessões por pasta", "Conversa" e "Mensagem" não eram anunciados direito ao chegar em cada campo. O rótulo agora é criado logo antes do campo, na ordem real das janelas do Windows, e cada campo também recebe o seu nome.

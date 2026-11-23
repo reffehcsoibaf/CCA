@@ -10,7 +10,7 @@ import re
 import markup
 
 APP_NAME = "CCA"  # Claude Code Acessível
-VERSION = "2026.11.14.1"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
+VERSION = "2026.11.23.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
 ITEM_MAX_CHARS = 4000
 
 # (valor para o SDK, rótulo no menu). Valor vazio = padrão do Claude Code.

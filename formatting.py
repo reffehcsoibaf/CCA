@@ -10,7 +10,7 @@ import re
 import markup
 
 APP_NAME = "CCA"  # Claude Code Acessível
-VERSION = "2026.11.23.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
+VERSION = "2026.11.27.0"  # ano.mês.dia.dígito, como o TeleZapp; igual à release e ao CHANGELOG.md
 ITEM_MAX_CHARS = 4000
 
 # (valor para o SDK, rótulo no menu). Valor vazio = padrão do Claude Code.
@@ -37,9 +37,14 @@ EFFORTS = [
 ]
 
 
-# Lembrete de compactar: (tokens, rótulo). 0 desliga.
+# Compactar a conversa: desativado, só lembrar ou compactar sozinho.
+COMPACT_MODES = [
+    ("off", "Desativado"),
+    ("remind", "Lembrar"),
+    ("auto", "Automático"),
+]
+# Quantidade de tokens: (tokens, rótulo).
 COMPACT_REMINDERS = [
-    (0, "Nunca"),
     (100_000, "100 mil tokens"),
     (200_000, "200 mil tokens"),
     (300_000, "300 mil tokens"),
@@ -62,17 +67,19 @@ def context_text(tokens, percentage):
     return f"A conversa está com {tokens_text(tokens)}, {round(percentage)}% do limite"
 
 
-def context_details(tokens, max_tokens, percentage, threshold=0):
+def context_details(tokens, max_tokens, percentage, threshold=0, auto=False):
     """Texto da janela Tamanho da conversa."""
     lines = [context_text(tokens, percentage) + "."]
     if max_tokens:
         lines.append(f"O limite desta conversa é de {tokens_text(max_tokens)}.")
     lines.append("Cada mensagem que você envia faz o Claude reler tudo isso; por isso uma conversa grande"
                  " gasta mais do seu limite de uso. Ctrl+K compacta a conversa e deixa as próximas mais baratas.")
-    if threshold:
+    if threshold and auto:
+        lines.append(f"A conversa é compactada sozinha quando passar de {tokens_text(threshold)}.")
+    elif threshold:
         lines.append(f"Você é lembrado de compactar quando passar de {tokens_text(threshold)}.")
     else:
-        lines.append("O lembrete de compactar está desligado em Configurações.")
+        lines.append("Compactar a conversa está desativado em Configurações.")
     lines.append("O tamanho é medido ao fim de cada resposta.")
     return "\n".join(lines)
 

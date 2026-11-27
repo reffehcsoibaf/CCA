@@ -211,4 +211,5 @@ def test_context_details():
     assert lines[0] == "A conversa está com 669 mil tokens, 67% do limite."
     assert lines[1] == "O limite desta conversa é de 1 milhão de tokens."
     assert "Ctrl+K" in text and "200 mil tokens" in text
-    assert "desligado" in formatting.context_details(1000, 0, 1, 0)
+    assert "desativado" in formatting.context_details(1000, 0, 1, 0)
+    assert "sozinha" in formatting.context_details(1000, 0, 1, 200_000, True)

@@ -4,6 +4,10 @@ Versões no formato `ano.mês.dia.dígito` (o dígito começa em 0 e sobe se hou
 
 Cada versão é publicada como release no GitHub, sempre marcada como Latest. A tag e o título da release são o próprio número. O número também fica em `VERSION` no `formatting.py` e aparece no título da janela.
 
+## 2026.11.27.0
+
+Compactar a conversa agora tem três modos em Configurações: Desativado, Lembrar e Automático. A caixa com a quantidade de tokens (100, 200, 300 ou 500 mil) só aparece em Lembrar e Automático e fica oculta em Desativado. Em Lembrar, o app avisa ao passar da quantidade, como antes. Em Automático, quando a conversa passa da quantidade e o Claude está parado, o app compacta sozinho, uma vez por estouro. Quem tinha "Nunca" fica em Desativado.
+
 ## 2026.11.23.0
 
 Fala automática também pelo JAWS. Antes o app só falava pelo NVDA: com o JAWS ele ficava mudo (etapas, "Pronto", perguntas, avisos de limite e de compactar). Agora o leitor ativo é escolhido a cada fala, NVDA ou JAWS. Os textos das Configurações dizem "leitor de telas" em vez de "NVDA". Com o Narrador a fala automática continua muda.

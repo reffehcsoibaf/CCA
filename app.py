@@ -46,6 +46,7 @@ DEFAULTS = {
     "sound_list_edge": True,
     "speak_steps": True,
     "speak_answer": False,
+    "compact_mode": "remind",
     "compact_reminder": 200_000,
 }
 
@@ -391,7 +392,7 @@ class SettingsDialog(wx.Dialog):
         super().__init__(parent, title="Configurações")
         self.cwd = cwd
         self.models = list(models)
-        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer = self.sizer = wx.BoxSizer(wx.VERTICAL)
 
         def check(label, key):
             box = wx.CheckBox(self, label=label)
@@ -400,8 +401,10 @@ class SettingsDialog(wx.Dialog):
             return box
 
         def choice(label, choices, value):
-            sizer.Add(wx.StaticText(self, label=label), 0, wx.LEFT | wx.TOP, 5)
+            text = wx.StaticText(self, label=label)
+            sizer.Add(text, 0, wx.LEFT | wx.TOP, 5)
             ctrl = wx.Choice(self, choices=[c[1] for c in choices])
+            ctrl.caption = text
             values = [c[0] for c in choices]
             ctrl.SetSelection(values.index(value) if value in values else 0)
             sizer.Add(ctrl, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 5)
@@ -419,8 +422,11 @@ class SettingsDialog(wx.Dialog):
         sizer.Add(self.refresh, 0, wx.ALL, 5)
         self.effort = choice("&Esforço", formatting.EFFORTS, config.get("effort"))
         self.chrome = check("Na&vegar pelo Chrome (extensão Claude in Chrome)", "chrome")
-        self.reminder = choice("Lembrar de &compactar quando a conversa passar de",
+        self.compact_mode = choice("&Compactar a conversa", formatting.COMPACT_MODES, config.get("compact_mode"))
+        self.reminder = choice("&Quantidade de tokens para compactar",
                                formatting.COMPACT_REMINDERS, config.get("compact_reminder"))
+        self.compact_mode.Bind(wx.EVT_CHOICE, lambda e: self._update_reminder())
+        self._update_reminder(fit=False)
         self.folder = wx.Button(self, label="")
         self._update_folder()
         self.folder.Bind(wx.EVT_BUTTON, self.on_folder)
@@ -431,6 +437,16 @@ class SettingsDialog(wx.Dialog):
         sizer.Add(buttons, 0, wx.ALL | wx.ALIGN_RIGHT, 5)
         self.SetSizerAndFit(sizer)
         self.sound_attention.SetFocus()
+
+    def _update_reminder(self, fit=True):
+        """A caixa das quantidades só aparece em Lembrar e Automático."""
+        show = formatting.COMPACT_MODES[self.compact_mode.GetSelection()][0] != "off"
+        sizer = self.sizer
+        sizer.Show(self.reminder.caption, show)
+        sizer.Show(self.reminder, show)
+        if fit:
+            self.Layout()
+            self.Fit()
 
     def set_models(self, models):
         """Lista nova depois de Atualizar; mantém o modelo escolhido."""
@@ -462,6 +478,7 @@ class SettingsDialog(wx.Dialog):
             "model": self.models[self.model.GetSelection()][0],
             "effort": formatting.EFFORTS[self.effort.GetSelection()][0],
             "chrome": self.chrome.GetValue(),
+            "compact_mode": formatting.COMPACT_MODES[self.compact_mode.GetSelection()][0],
             "compact_reminder": formatting.COMPACT_REMINDERS[self.reminder.GetSelection()][0],
         }
 
@@ -470,7 +487,12 @@ class MainFrame(wx.Frame):
     def __init__(self):
         super().__init__(None, title=formatting.APP_NAME, size=(900, 750))
         self.config = dict(DEFAULTS)
-        self.config.update(sessions.load_config())
+        saved = sessions.load_config()
+        self.config.update(saved)
+        if "compact_mode" not in saved and saved.get("compact_reminder") == 0:
+            self.config["compact_mode"] = "off"   # antes, 0 era "Nunca"
+        if not self.config.get("compact_reminder"):
+            self.config["compact_reminder"] = DEFAULTS["compact_reminder"]
         self.cwd = self.config.get("cwd") or os.path.expanduser("~")
         self.cli = find_cli()
         self.speaker = feedback.Speaker()
@@ -499,6 +521,7 @@ class MainFrame(wx.Frame):
         self.compacting = False              # /compact em andamento
         self.context = None                  # (tokens, porcentagem) da conversa, medido a cada resposta
         self.context_max = 0                 # limite de tokens da conversa
+        self.skip_auto = False               # já compactou sozinho neste estouro
         self.reminded_at = 0                 # tamanho no último lembrete de compactar
         self.limited_until = self.config.get("limit_resets_at") or None
         self.pending_title = None            # nome dado à sessão nova antes de ela existir
@@ -909,9 +932,14 @@ class MainFrame(wx.Frame):
             return
         self.context = (tokens, percentage)
         self.context_max = max_tokens
-        threshold = self.config.get("compact_reminder") or 0
+        threshold = self.compact_threshold()
         if tokens < threshold:
             self.reminded_at = 0  # compactou ou é outra conversa: o próximo aviso volta a valer
+            self.skip_auto = False
+        if self.config.get("compact_mode") == "auto":
+            if threshold and tokens >= threshold:
+                wx.CallLater(1500, self.auto_compact)
+            return
         if formatting.should_remind_compact(tokens, threshold, self.reminded_at):
             self.reminded_at = tokens
             text = (formatting.context_text(tokens, percentage) + ". Cada mensagem relê tudo isso:"
@@ -921,13 +949,37 @@ class MainFrame(wx.Frame):
             # Fala mesmo com a fala automática desligada; quem não quer, escolhe Nunca em Configurações.
             self.speaker.speak(text)
 
+    def compact_threshold(self):
+        """Tokens a partir dos quais lembrar ou compactar; 0 se desativado."""
+        if self.config.get("compact_mode") == "off":
+            return 0
+        return self.config.get("compact_reminder") or 0
+
+    def auto_compact(self):
+        """Modo Automático: compacta sozinho quando a conversa passa do limite
+        e o Claude está parado. Uma vez por estouro, para não repetir em laço."""
+        if not self or self.config.get("compact_mode") != "auto" or self.skip_auto:
+            return
+        threshold = self.compact_threshold()
+        if not self.context or not threshold or self.context[0] < threshold:
+            return
+        if (self.worker.session_id is None or self.state not in ("Pronto", "Erro")
+                or self.request is not None or self.compacting):
+            return
+        self.skip_auto = True
+        self.announce(formatting.context_text(*self.context) + ". Compactando a conversa automaticamente.")
+        self.compacting = True
+        self.set_state("Compactando a conversa")
+        self.worker.send("/compact")
+
     def show_context(self):
         """Janela somente leitura, como a do limite de uso: o NVDA lê o texto
         ao abrir, sem depender da fala automática."""
         if self.context:
             tokens, percentage = self.context
             text = formatting.context_details(tokens, self.context_max, percentage,
-                                              self.config.get("compact_reminder") or 0)
+                                              self.compact_threshold(),
+                                              self.config.get("compact_mode") == "auto")
             self.set_status(formatting.context_text(tokens, percentage) + ".")
         else:
             text = ("O tamanho ainda não foi medido. Ele é medido ao fim de cada resposta do Claude: "
@@ -1041,6 +1093,8 @@ class MainFrame(wx.Frame):
             if not error:
                 self.announce("Conversa compactada. O Claude segue com um resumo do que foi feito até aqui.")
         self._scheduled_done(error)
+        if self.config.get("compact_mode") == "auto":
+            wx.CallLater(2000, self.auto_compact)
 
     def _fetch_title(self, session_id):
         title = sessions.fetch_title(session_id)
